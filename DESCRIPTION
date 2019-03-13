@@ -1,0 +1,17 @@
+Package: OptSortCausal
+Type: Package
+Title: Nonparamtric Estimation of the Causal Effects of Constrained Optimal Treatment with many Treatments
+Version: 0.1.0
+Author: Jacqueline Mauro
+Maintainer: The package maintainer <yourself@somewhere.net>
+Description: More about what it does (maybe more than one line)
+    Use four spaces when indenting paragraphs within the Description.
+License: license
+Encoding: UTF-8
+LazyData: true
+Suggests: 
+Imports: 
+  SuperLearner,
+  glmnet,
+  testthat,
+  matlabr
