@@ -42,14 +42,21 @@ predict_pi <- function(a, train_a, train_x, test_x, sl.lib.pi){
   return(c(predict.SuperLearner(object = pi_model, newdata = test_x, onlySL = T)$pred))
 }
 
-nuisance_est <- function(df, s, output_root, fudge, nsplits ,epsilon, sections,sl.lib,sl.lib.pi){
+nuisance_est <- function(df, s, output_root, fudge, nsplits, epsilon, sections, sl.lib, sl.lib.pi){
+
+  # splits into 3 samples (fixed):
+  # sample 1: train mu and pi
+  # sample 2: train mu2 for f
+  # sample 3: predict muhat and pihat from sample1; predict f = argmin(muhat2) from sample 2
+
   n = dim(df)[1]; p = length(unique(df$a))
+  muhat.mat <- pihat.mat <- matrix(rep(NA, n*p), ncol = p); assig.vec <- rep(NA,n)
 
-  muhat.mat <- pihat.mat <- matrix(rep(NA, n*p), ncol = p)
+  for(vfold in 1:3){
 
-  for(vfold in 1:nsplits){
-    train = (s==vfold); test = (s!=vfold)
-    output_constraints(df[test,], output_root, fudge, suffix = vfold)
+    train = (s==vfold)
+    train2 = sapply(s, function(k) ifelse(vfold<nsplits, k==vfold+1, k==1) )
+    test = sapply(s, function(k) ifelse(vfold==1,3,ifelse(vfold==2,1,2)))
 
     if(length(sections)==0){
       train_y = df$y[train]; train_a = df$a[train];
@@ -57,27 +64,70 @@ nuisance_est <- function(df, s, output_root, fudge, nsplits ,epsilon, sections,s
       avals = sort(unique(train_a))
       muhat.mat[test,] = make_mu_matrix(train_y, train_a, train_x, test_x, avals, sl.lib)
       pihat.mat[test,] = make_pi_matrix(avals, train_a, train_x, test_x, epsilon, sl.lib.pi)
+
+      train_2y = df$y[train2]; train_2a = df$a[train2];train_2x = subset(df, select = -c(a, y))[train2,]
+      muhat2.mat = make_mu_matrix(train_2y, train_2a, train_2x, test_2x, avals, sl.lib)
+      assig.vec[test] = apply(muhat2.mat,1,which.min)
     }
 
     else{
       for(sec in sections){
         avals = sort(sec)
         train_cond = (train & (df$a %in% sec))
+        train2_cond = (train2 & (df$a %in% sec))
         test_cond = (test & (df$a %in% sec))
 
+        # estimate nuisance parameters within sections
         train_y = df$y[train_cond]; train_a = df$a[train_cond];
         train_x = subset(df, select = -c(a, y))[train_cond,]; test_x = subset(df, select = -c(a, y))[test_cond,]
         muhat.mat[test_cond, levels(df$a) %in% sec] = make_mu_matrix(train_y, train_a, train_x, test_x, avals, sl.lib)
         pihat.mat[test_cond, levels(df$a) %in% sec] = make_pi_matrix(avals, train_a, train_x, test_x, epsilon, sl.lib.pi)
 
-        # set to inf or epsilon if wrong sec level
-        pihat.mat[test_cond, !(levels(df$a) %in% sec)] = epsilon
-        muhat.mat[test_cond, !(levels(df$a) %in% sec)] = 1e10
+        train_2y = df$y[train2_cond]; train_2a = df$a[train2_cond];train_2x = subset(df, select = -c(a, y))[train2_cond,]
+        muhat2.mat = make_mu_matrix(train_2y, train_2a, train_2x, test_2x, avals, sl.lib)
+        muhat2.mat[, !(levels(df$a) %in% sec)] = 1e10
+        assig.vec[test] = apply(muhat2.mat,1,which.min)
       }
     }
   }
-  return(list(muhat.mat = muhat.mat, pihat.mat = pihat.mat))
+  return(list(muhat.mat = muhat.mat, pihat.mat = pihat.mat, assig.vec = assig.vec))
 }
+
+# nuisance_est <- function(df, s, output_root, fudge, nsplits ,epsilon, sections,sl.lib,sl.lib.pi){
+#   n = dim(df)[1]; p = length(unique(df$a))
+#
+#   muhat.mat <- pihat.mat <- matrix(rep(NA, n*p), ncol = p)
+#
+#   for(vfold in 1:nsplits){
+#     train = (s==vfold); test = (s!=vfold)
+#
+#     if(length(sections)==0){
+#       train_y = df$y[train]; train_a = df$a[train];
+#       train_x = subset(df, select = -c(a, y))[train,]; test_x = subset(df, select = -c(a, y))[test,]
+#       avals = sort(unique(train_a))
+#       muhat.mat[test,] = make_mu_matrix(train_y, train_a, train_x, test_x, avals, sl.lib)
+#       pihat.mat[test,] = make_pi_matrix(avals, train_a, train_x, test_x, epsilon, sl.lib.pi)
+#     }
+#
+#     else{
+#       for(sec in sections){
+#         avals = sort(sec)
+#         train_cond = (train & (df$a %in% sec))
+#         test_cond = (test & (df$a %in% sec))
+#
+#         train_y = df$y[train_cond]; train_a = df$a[train_cond];
+#         train_x = subset(df, select = -c(a, y))[train_cond,]; test_x = subset(df, select = -c(a, y))[test_cond,]
+#         muhat.mat[test_cond, levels(df$a) %in% sec] = make_mu_matrix(train_y, train_a, train_x, test_x, avals, sl.lib)
+#         pihat.mat[test_cond, levels(df$a) %in% sec] = make_pi_matrix(avals, train_a, train_x, test_x, epsilon, sl.lib.pi)
+#
+#         # set to inf or epsilon if wrong sec level
+#         pihat.mat[test_cond, !(levels(df$a) %in% sec)] = epsilon
+#         muhat.mat[test_cond, !(levels(df$a) %in% sec)] = 1e10
+#       }
+#     }
+#   }
+#   return(list(muhat.mat = muhat.mat, pihat.mat = pihat.mat))
+# }
 
 unconstrained_opt <- function(df,muhat.mat,avals){
   # takes in muhat and pihat
