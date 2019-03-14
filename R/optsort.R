@@ -32,10 +32,10 @@ optSort <- function(df, output_root = "~", fudge = .05, nsplits = 3,epsilon = 1e
   pihat.mat = etas$pihat.mat
   avals = unique(df$a)
 
-  unconstraind.output <- constrained.output <- approx.output <- list()
+  unconstrained.output <- constrained.output <- approx.output <- list()
   if("unconstrained" %in% tolower(optimizers)){ unconstrained.output = unconstrained_opt(df,avals,output_root) }
   if("constrained" %in% tolower(optimizers)){ constrained.output = constrained_opt(df,output_root, fudge, avals)}
-  if("approximate" %in% tolower(optimizers)){ approx.output = approximate_opt(df,output_root,fudge)}
+  if("approximate" %in% tolower(optimizers)){ approx.output = approximate_opt(df,output_root,fudge,sections,sl.lib=sl.lib,sl.lib.pi = sl.lib.pi)}
 
-  return(list(unconstrained = unconstraind.output, constrained = constrained.output, approximate = approx.output))
+  return(list(unconstrained = unconstrained.output, constrained = constrained.output, approximate = approx.output))
 }

@@ -11,14 +11,14 @@ expit <- function(x) {exp(x)/(1 + exp(x))}
 
 make_mu_matrix<-function(train_y, train_a, train_x, test_x, avals, sl.lib){
   requireNamespace("SuperLearner")
-  train_df = data.frame(A = as.numeric(train_a), train_x)
-  mu.model = SuperLearner(Y = train_y, X = train_df, family = binomial(), SL.library = sl.lib)
+  train_df = data.frame(a= as.numeric(train_a), train_x)
+  mu.model = SuperLearner(Y = train_y, X = train_df, family = binomial(), SL.library = sl.lib, verbose = FALSE)
   muhat = sapply(avals, function(k) predict_mu(a=k, avals = avals, mu.model = mu.model, test_x = test_x)  )
   return(muhat)
 }
 
 predict_mu <- function(a, avals, mu.model, test_x){
-  test_x$A = as.numeric(a)
+  test_x$a = as.numeric(a)
   return(c(predict.SuperLearner(object = mu.model, newdata = test_x, onlySL = T)$pred))
 }
 
@@ -35,7 +35,7 @@ make_pi_matrix <- function(avals, train_a, train_x, test_x, epsilon = 1e-3, sl.l
 predict_pi <- function(a, train_a, train_x, test_x, sl.lib.pi){
   #for a single a value, create a model of prob(A = a) and predict on new data#
   requireNamespace("SuperLearner")
-  pi_model = SuperLearner(Y = as.numeric(train_a == a), X = train_x, family = binomial(), SL.library = sl.lib.pi)
+  pi_model = invisible(SuperLearner(Y = as.numeric(train_a == a), X = train_x, family = binomial(), SL.library = sl.lib.pi))
   return(c(predict.SuperLearner(object = pi_model, newdata = test_x, onlySL = T)$pred))
 }
 
@@ -115,6 +115,12 @@ unconstrained_opt <- function(df,avals,output_root){
   sdU = sd(ifU)/sqrt(length(muhatU))
   plugin.sdU = sd(muhatU)/sqrt(length(muhatU))
 
+  res = data.frame(Estimate = c(pluginU, psiU), SD = c(plugin.sdU, sdU),
+                   lower = c(pluginU - 1.96*plugin.sdU, psiU - 1.96*sdU),
+                   upper = c(pluginU + 1.96*plugin.sdU, psiU + 1.96*sdU))
+  rownames(res) = c("Plug in", "IF-based")
+  print(res)
+
   return(list(assig.vec = fU, plugin = pluginU, plugin.sd = plugin.sdU, infl.func = ifU, psi = psiU, sd = sdU))
 }
 
@@ -143,6 +149,7 @@ constrained_opt_split <- function(df, muhat.mat, pihat.mat, s, output_root, nspl
 }
 
 constrained_opt <- function(df, output_root, fudge, avals){
+  print("Estimating Constraint")
   # not doing sample splitting
   # takes in muhat and pihat estimates
   # runs matlab code to find assignment that minimizes total muhat
@@ -165,45 +172,70 @@ constrained_opt <- function(df, output_root, fudge, avals){
   psiC = mean(ifC)
   sdC = sd(ifC)/sqrt(length(muhatC))
 
+  res = data.frame(Estimate = c(pluginC, psiC), SD = c(plugin.sdC, sdC),
+                   lower = c(pluginC - 1.96*plugin.sdC, psiC - 1.96*sdC),
+                   upper = c(pluginC + 1.96*plugin.sdC, psiC + 1.96*sdC))
+  rownames(res) = c("Plug in", "IF-based")
+  print(res)
+
   return(list(assig.vec = fC, plugin = pluginC, plugin.sd = plugin.sdC, infl.func = ifC, psi = psiC, sd = sdC))
 }
 
-
-approximate_opt <- function(df, output_root, fudge){
+approximate_opt <- function(df, output_root, fudge, sections,sl.lib = sl.lib, sl.lib.pi = sl.lib.pi){
+  print("Estimating Approximate Constraint")
   # get appromximate constrained regression-based estimates
-
-  ### how to incorporate sections into this and constrained opt?
-
   n = dim(df)[1]; p = length(unique(df$a))
-  muhat.mat <- pihat.mat <- matrix(rep(NA, n*p), ncol = p); fhat <- rep(NA,n)
+  fhat <- rep(NA,n)
   s = sample(rep(1:2,ceiling(n/2))[1:n])
 
+  muhat.mat <- pihat.mat <- matrix(rep(NA, n*p), ncol = p)
   for(vfold in 1:2){
     # step 1: train and predict mu model on training data for each a
     train = (s==vfold); test = (s!=vfold)
 
-    train_y = df$y[train]; train_a = df$a[train]; avals = sort(unique(train_a))
-    train_x = subset(df, select = -c(a, y))[train,]; test_x = subset(df, select = -c(a, y))[test,]
-    mu.model = SuperLearner(Y = train_y, X = data.frame(A = as.numeric(train_a), train_x), family = binomial(), SL.library = sl.lib)
-    muhat.mat.train = sapply(avals, function(k) predict_mu(a=k, avals = avals, mu.model = mu.model, test_x = train_x)  )
-    write.csv(muhat.mat.train, paste(output_root,"muhat_mat.csv", sep = ""))
+    if(length(sections)==0){
+      train_y = df$y[train]; train_a = df$a[train]; avals = sort(unique(train_a))
+      train_x = subset(df, select = -c(a, y))[train,]; test_x = subset(df, select = -c(a, y))[test,]
+      mu.model = SuperLearner(Y = train_y, X = data.frame(a = as.numeric(train_a), train_x), family = binomial(), SL.library = sl.lib)
+      muhat.mat.train = sapply(avals, function(k) predict_mu(a=k, avals = avals, mu.model = mu.model, test_x = train_x)  )
+      muhat.mat[test,] = sapply(avals, function(k) predict_mu(a=k, avals = avals, mu.model = mu.model, test_x = test_x)  )
+      pihat.mat[test,] = make_pi_matrix(avals, train_a, train_x, test_x, epsilon=1e-3, sl.lib.pi)
+    }
+    else{
+      muhat.mat.train <- matrix(rep(NA,sum(train)*p), ncol = p)
+      for(sec in sections){
+        avals = sort(sec); train_cond = (train & (df$a %in% sec));  test_cond = (test & (df$a %in% sec))
 
-    # step 2: get constrained assignment based on step2 muhats
+        # estimate nuisance parameters within sections
+        train_y = df$y[train_cond]; train_a = df$a[train_cond]
+        train_x = subset(df, select = -c(a, y))[train_cond,]
+        test_x = subset(df, select = -c(a, y))[test_cond,]
+        train_df = data.frame(a = as.numeric(train_a), train_x)
+        mu.model = SuperLearner(Y = train_y, X = train_df, family = binomial(), SL.library = sl.lib)
+        muhat.mat.train[df[train,]$a %in% sec,levels(df$a) %in% sec] = sapply(avals, function(k) predict_mu(a=k, avals = avals, mu.model = mu.model, test_x = train_x)  )
+        muhat.mat[test_cond,levels(df$a) %in% sec] = sapply(avals, function(k) predict_mu(a=k, avals = avals, mu.model = mu.model, test_x = test_x)  )
+        pihat.mat[test_cond,] = make_pi_matrix(avals, train_a, train_x, test_x, epsilon=1e-3, sl.lib.pi)
+
+        # replace NA's (wrong section) with large values so optimization doesn't assign them
+        muhat.mat.train[df[train,]$a %in% sec, !(levels(df$a) %in% sec)] = 1e10
+        muhat.mat[test_cond, !(levels(df$a) %in% sec)] = 1e10
+      }
+    }
+    # step 2: get constrained assignment based on step muhats
     write.csv(round(c(table(df[train,]$a) * (1+fudge))), paste(output_root, 'constraint.csv', sep = ""))
+    write.csv(muhat.mat.train, paste(output_root,"muhat_mat.csv", sep = ""))
     run_matlab_script(paste(output_root,'constrained_optimizer_code.m',sep= ""))
     fC.mat = read.csv(paste(output_root,"constrained_optimized_assignment.csv", sep = ""), header = F)
     fC = apply(fC.mat,1,which.max)
 
     # step 3: train the model E(f|muhat) on the training data
-    f.model = SuperLearner(Y = fC, X = muhat.mat.train, SL.library = sl.lib)
+    class.df = data.frame(a = as.factor(fC), muhat.mat.train)
+    f.model = ranger::ranger(a~., data = class.df, write.forest = TRUE)
 
     # step 4: fhat on testing data
-    fhat[test] = c(predict.SuperLearner(object = f.model, newdata = muhat.mat[test,], onlySL = T)$pred)
+    fhat[test] = predict(f.model, data.frame(muhat.mat[test,]), type='response')$pre
   }
   fhat.mat <- sapply(avals, function(a) as.numeric(fhat == a))
-  muhat.mat = as.matrix(read.csv(paste(output_root,"muhat_mat.csv", sep = "")))[,-1]
-  pihat.mat = as.matrix(read.csv(paste(output_root,"pihat_mat.csv", sep = "")))[,-1]
-
   pihat = diag(pihat.mat %*% t(fhat.mat))
   muhat = diag(muhat.mat %*% t(fhat.mat))
   plugin = mean(muhat)
@@ -211,6 +243,12 @@ approximate_opt <- function(df, output_root, fudge){
   ifA = (as.numeric(df$a == avals[fhat])/pihat)*(df$y - muhat) + muhat
   psi = mean(ifA)
   sd = sd(ifA)/sqrt(length(muhat))
+
+  res = data.frame(Estimate = c(plugin, psi), SD = c(plugin.sd, sd),
+                   lower = c(plugin - 1.96*plugin.sd, psi - 1.96*sd),
+                   upper = c(plugin + 1.96*plugin.sd, psi + 1.96*sd))
+  rownames(res) = c("Plug in", "IF-based")
+  print(res)
 
   return(list(assig.vec = fhat, plugin = plugin, plugin.sd = plugin.sd, infl.func = ifA, psi = psi, sd = sd))
 }
