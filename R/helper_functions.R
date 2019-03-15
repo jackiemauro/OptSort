@@ -11,14 +11,12 @@ expit <- function(x) {exp(x)/(1 + exp(x))}
 
 make_mu_matrix<-function(train_y, train_a, train_x, test_x, avals, sl.lib){
   requireNamespace("SuperLearner")
-  train_df = data.frame(a= as.numeric(train_a), train_x)
-  mu.model = SuperLearner(Y = train_y, X = train_df, family = binomial(), SL.library = sl.lib, verbose = FALSE)
-  muhat = sapply(avals, function(k) predict_mu(a=k, avals = avals, mu.model = mu.model, test_x = test_x)  )
+  muhat = sapply(avals, function(k) predict_mu(train_y, train_a, k, train_x, sl.lib, test_x))
   return(muhat)
 }
 
-predict_mu <- function(a, avals, mu.model, test_x){
-  test_x$a = as.numeric(a)
+predict_mu <- function(train_y, train_a, a, train_x, sl.lib, test_x){
+  mu.model = SuperLearner(Y = train_y[train_a==a], X = train_x[train_a==a,], family = binomial(), SL.library = sl.lib, verbose = FALSE)
   return(c(predict.SuperLearner(object = mu.model, newdata = test_x, onlySL = T)$pred))
 }
 
@@ -92,12 +90,14 @@ nuisance_est <- function(df, s, output_root, fudge, nsplits, epsilon, sections, 
     }
   }
   write.csv(muhat.mat, paste(output_root,"muhat_mat.csv", sep = ""))
+  write.csv(muhat2.mat, paste(output_root,"muhat2_mat.csv", sep = ""))
   write.csv(pihat.mat, paste(output_root,"pihat_mat.csv", sep = ""))
   write.csv(assig.vec, paste(output_root,"assig_vec.csv", sep = ""))
   return(list(muhat.mat = muhat.mat, pihat.mat = pihat.mat, assig.vec = assig.vec, muhat2.mat = muhat2.mat))
 }
 
 unconstrained_opt <- function(df,avals,output_root){
+  print("Estimating Unconstrained Optimal")
   # takes in muhat and pihat
   # finds unconstrained optimal assignment based on muhat
   # outputs plug in and if-based estimates
@@ -149,7 +149,7 @@ constrained_opt_split <- function(df, muhat.mat, pihat.mat, s, output_root, nspl
 }
 
 constrained_opt <- function(df, output_root, fudge, avals){
-  print("Estimating Constraint")
+  print("Estimating Constrained Optimal")
   # not doing sample splitting
   # takes in muhat and pihat estimates
   # runs matlab code to find assignment that minimizes total muhat
@@ -178,11 +178,11 @@ constrained_opt <- function(df, output_root, fudge, avals){
   rownames(res) = c("Plug in", "IF-based")
   print(res)
 
-  return(list(results = res, assig.vec = fhat, infl.func = ifC))
+  return(list(results = res, assig.vec = fC, infl.func = ifC))
 }
 
 approximate_opt <- function(df, output_root, fudge, sections,sl.lib = sl.lib, sl.lib.pi = sl.lib.pi){
-  print("Estimating Approximate Constraint")
+  print("Estimating Approximate Constrained Optimal")
   # get appromximate constrained regression-based estimates
   n = dim(df)[1]; p = length(unique(df$a))
   fhat <- rep(NA,n)

@@ -26,6 +26,10 @@ optSort <- function(df, output_root = "~", fudge = .05, nsplits = 3,epsilon = 1e
   n = dim(df)[1]; p = length(unique(df$a))
   s = sample(rep(1:nsplits,ceiling(n/nsplits))[1:n])
 
+  if(!("a"%in% names(df)) | !("y"%in% names(df)) ){stop("Treatment needs to be named 'a'; outcome needs to be named 'y'")}
+  if(!(is.factor(df$a))){df$a = as.factor(df$a); warning("Converting a to factor")}
+  if(fudge>.5){warning("Fudge factor over 0.5, likely too high")}
+
   etas = nuisance_est(df, s, output_root, fudge, nsplits ,epsilon, sections, sl.lib, sl.lib.pi)
 
   muhat.mat = etas$muhat.mat
@@ -37,5 +41,5 @@ optSort <- function(df, output_root = "~", fudge = .05, nsplits = 3,epsilon = 1e
   if("constrained" %in% tolower(optimizers)){ constrained.output = constrained_opt(df,output_root, fudge, avals)}
   if("approximate" %in% tolower(optimizers)){ approx.output = approximate_opt(df,output_root,fudge,sections,sl.lib=sl.lib,sl.lib.pi = sl.lib.pi)}
 
-  return(list(unconstrained = unconstrained.output, constrained = constrained.output, approximate = approx.output))
+  return(list(unconstrained = unconstrained.output, constrained = constrained.output, approximate = approx.output, etas = etas))
 }
