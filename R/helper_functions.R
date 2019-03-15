@@ -121,7 +121,7 @@ unconstrained_opt <- function(df,avals,output_root){
   rownames(res) = c("Plug in", "IF-based")
   print(res)
 
-  return(list(assig.vec = fU, plugin = pluginU, plugin.sd = plugin.sdU, infl.func = ifU, psi = psiU, sd = sdU))
+  return(list(results = res, assig.vec = fU, infl.func = ifU))
 }
 
 constrained_opt_split <- function(df, muhat.mat, pihat.mat, s, output_root, nsplits, fudge, avals){
@@ -178,7 +178,7 @@ constrained_opt <- function(df, output_root, fudge, avals){
   rownames(res) = c("Plug in", "IF-based")
   print(res)
 
-  return(list(assig.vec = fC, plugin = pluginC, plugin.sd = plugin.sdC, infl.func = ifC, psi = psiC, sd = sdC))
+  return(list(results = res, assig.vec = fhat, infl.func = ifC))
 }
 
 approximate_opt <- function(df, output_root, fudge, sections,sl.lib = sl.lib, sl.lib.pi = sl.lib.pi){
@@ -235,6 +235,13 @@ approximate_opt <- function(df, output_root, fudge, sections,sl.lib = sl.lib, sl
     # step 4: fhat on testing data
     fhat[test] = predict(f.model, data.frame(muhat.mat[test,]), type='response')$pre
   }
+  res = get_res(df, fhat, pihat.mat, muhat.mat)
+
+  return(list(results = res$res, assig.vec = fhat, infl.func = res$infl.func))
+}
+
+get_res <- function(df, fhat, pihat.mat, muhat.mat){
+  avals = sort(unique(df$a))
   fhat.mat <- sapply(avals, function(a) as.numeric(fhat == a))
   pihat = diag(pihat.mat %*% t(fhat.mat))
   muhat = diag(muhat.mat %*% t(fhat.mat))
@@ -250,10 +257,8 @@ approximate_opt <- function(df, output_root, fudge, sections,sl.lib = sl.lib, sl
   rownames(res) = c("Plug in", "IF-based")
   print(res)
 
-  return(list(assig.vec = fhat, plugin = plugin, plugin.sd = plugin.sd, infl.func = ifA, psi = psi, sd = sd))
+  return(list(res = res, infl.func = ifA))
 }
-
-
 
 
 
