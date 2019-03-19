@@ -9,6 +9,12 @@ globalVariables('root')
 
 expit <- function(x) {exp(x)/(1 + exp(x))}
 
+quiet <- function(x) {
+  sink(tempfile())
+  on.exit(sink())
+  invisible(force(x))
+}
+
 make_mu_matrix<-function(train_y, train_a, train_x, test_x, avals, sl.lib){
   requireNamespace("SuperLearner")
   muhat = sapply(avals, function(k) predict_mu(train_y, train_a, k, train_x, sl.lib, test_x))
@@ -16,7 +22,7 @@ make_mu_matrix<-function(train_y, train_a, train_x, test_x, avals, sl.lib){
 }
 
 predict_mu <- function(train_y, train_a, a, train_x, sl.lib, test_x){
-  mu.model = SuperLearner(Y = train_y[train_a==a], X = train_x[train_a==a,], family = binomial(), SL.library = sl.lib, verbose = FALSE)
+  mu.model = quiet(SuperLearner(Y = train_y[train_a==a], X = train_x[train_a==a,], family = binomial(), SL.library = sl.lib, verbose = FALSE))
   return(c(predict.SuperLearner(object = mu.model, newdata = test_x, onlySL = T)$pred))
 }
 
@@ -33,11 +39,11 @@ make_pi_matrix <- function(avals, train_a, train_x, test_x, epsilon = 1e-3, sl.l
 predict_pi <- function(a, train_a, train_x, test_x, sl.lib.pi){
   #for a single a value, create a model of prob(A = a) and predict on new data#
   requireNamespace("SuperLearner")
-  pi_model = invisible(SuperLearner(Y = as.numeric(train_a == a), X = train_x, family = binomial(), SL.library = sl.lib.pi))
+  pi_model = quiet(SuperLearner(Y = as.numeric(train_a == a), X = train_x, family = binomial(), SL.library = sl.lib.pi))
   return(c(predict.SuperLearner(object = pi_model, newdata = test_x, onlySL = T)$pred))
 }
 
-nuisance_est <- function(df, s, output_root, fudge, nsplits, epsilon, sections, sl.lib, sl.lib.pi){
+nuisance_est <- function(df, s, output_root, fudge, nsplits, epsilon, sections, sl.lib, sl.lib.pi, nfolds){
 
   # splits into 3 samples (fixed):
   # sample 1: train mu and pi
@@ -47,7 +53,7 @@ nuisance_est <- function(df, s, output_root, fudge, nsplits, epsilon, sections, 
   n = dim(df)[1]; p = length(unique(df$a))
   muhat.mat <- pihat.mat <- muhat2.mat <- matrix(rep(NA, n*p), ncol = p); assig.vec <- rep(NA,n)
 
-  for(vfold in 1:3){
+  for(vfold in 1:nfolds){
 
     train = (s==vfold)
     train2 = sapply(s, function(k) ifelse(vfold<nsplits, k==vfold+1, k==1) )
@@ -106,10 +112,10 @@ unconstrained_opt <- function(df,avals,output_root){
   pihat.mat = as.matrix(read.csv(paste(output_root,"pihat_mat.csv", sep = "")))[,-1]
   fU = read.csv(paste(output_root,"assig_vec.csv", sep = ""))[,-1]
 
-  pluginU = mean(apply(muhat.mat,1,min))
   fU.mat = sapply(c(1:length(avals)), function(a) as.numeric(fU == a))
   pihatU = diag(pihat.mat %*% t(fU.mat))
   muhatU = diag(muhat.mat %*% t(fU.mat))
+  pluginU = mean(muhatU)
   ifU = (as.numeric(df$a == avals[fU])/pihatU)*(df$y - muhatU) + muhatU
   psiU = mean(ifU)
   sdU = sd(ifU)/sqrt(length(muhatU))
@@ -194,11 +200,11 @@ approximate_opt <- function(df, output_root, fudge, sections,sl.lib = sl.lib, sl
     train = (s==vfold); test = (s!=vfold)
 
     if(length(sections)==0){
+      avals = sort(unique(df$a))
       train_y = df$y[train]; train_a = df$a[train]; avals = sort(unique(train_a))
       train_x = subset(df, select = -c(a, y))[train,]; test_x = subset(df, select = -c(a, y))[test,]
-      mu.model = SuperLearner(Y = train_y, X = data.frame(a = as.numeric(train_a), train_x), family = binomial(), SL.library = sl.lib)
-      muhat.mat.train = sapply(avals, function(k) predict_mu(a=k, avals = avals, mu.model = mu.model, test_x = train_x)  )
-      muhat.mat[test,] = sapply(avals, function(k) predict_mu(a=k, avals = avals, mu.model = mu.model, test_x = test_x)  )
+      muhat.mat.train = make_mu_matrix(train_y,train_a,train_x,train_x,avals,sl.lib)
+      muhat.mat[test,] = make_mu_matrix(train_y,train_a,train_x,test_x,avals,sl.lib)
       pihat.mat[test,] = make_pi_matrix(avals, train_a, train_x, test_x, epsilon=1e-3, sl.lib.pi)
     }
     else{
@@ -211,9 +217,8 @@ approximate_opt <- function(df, output_root, fudge, sections,sl.lib = sl.lib, sl
         train_x = subset(df, select = -c(a, y))[train_cond,]
         test_x = subset(df, select = -c(a, y))[test_cond,]
         train_df = data.frame(a = as.numeric(train_a), train_x)
-        mu.model = SuperLearner(Y = train_y, X = train_df, family = binomial(), SL.library = sl.lib)
-        muhat.mat.train[df[train,]$a %in% sec,levels(df$a) %in% sec] = sapply(avals, function(k) predict_mu(a=k, avals = avals, mu.model = mu.model, test_x = train_x)  )
-        muhat.mat[test_cond,levels(df$a) %in% sec] = sapply(avals, function(k) predict_mu(a=k, avals = avals, mu.model = mu.model, test_x = test_x)  )
+        muhat.mat.train[df[train,]$a %in% sec,levels(df$a) %in% sec] = make_mu_matrix(train_y,train_a,train_x,train_x,avals,sl.lib)
+        muhat.mat[test_cond,levels(df$a) %in% sec] = make_mu_matrix(train_y,train_a,train_x,test_x,avals,sl.lib)
         pihat.mat[test_cond,] = make_pi_matrix(avals, train_a, train_x, test_x, epsilon=1e-3, sl.lib.pi)
 
         # replace NA's (wrong section) with large values so optimization doesn't assign them
