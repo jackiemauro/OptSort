@@ -48,6 +48,29 @@ test_that('approximate constrained opt works in sections', {
   out = optSort(df, '~/temporaryoutputs/', optimizers = c("approximate"), sections = list(c(1,2),c(3,4)))
 })
 
+test_that('we get about the result we expect on an easier simulation', {
+  #a=1 is optimal for everyone
+  #if a=1, mu is .35. otherwise it's .65
+  #prob getting a=1 27% so constrained min is 0.65*(1-.27) + 0.35*0.27 = 0.56--essentially you can do no better
+
+  require(SuperLearner)
+  n = 5000
+  x = matrix(rnorm(2*n), ncol = 2)
+  p1 = 0.5*(x[,1] > 1) + 0.2; p2 = 0.5*(x[,1] < -1) + 0.2; p3 = 0.6*( (x[,1]> -1)*(x[,1] < 1)) + .1
+  a = apply(cbind(p1,p2,p3), 1, function(k) sample(c(1:3), 1, replace = F, prob = k))
+
+  mu = runif(n,.5,.8) - 0.3*(a==1)
+  y = rbinom(n,1,mu)
+  df = data.frame(y = y, a = as.factor(a), x)
+  rm("a","x","y")
+
+  out = optSort(df, '~/temporaryoutputs/', optimizers = c("unconstrained", "constrained"))
+  #out = optSort(df, '~/temporaryoutputs/', optimizers = c("unconstrained", "constrained", "approximate"))
+  expect_less_than(out$unconstrained$results$Estimate[2],.4)
+  expect_less_than(out$constrained$results$Estimate[2],.6)
+  expect_less_than(out$approximate$results$Estimate[2],.5)
+})
+
 test_that('we get about the result we expect', {
   # mean is .3 if at optimal a, .5 otherwise
   # under constraint, optimal is ~.34
@@ -60,13 +83,14 @@ test_that('we get about the result we expect', {
   p1s = 0.5*(x[,1] > 0) + 0.2; p2s = 0.5*(x[,1] < -1/2) + 0.2; p3s = 0.6*( (x[,1]> -1/2)*(x[,1] < 0)) + .1
   astar = apply(cbind(p1s,p2s,p3s), 1, function(k) sample(c(1:3), 1, replace = F, prob = k))
 
-  mu = runif(n,.4,.6) - 0.2*(a==astar)
+  mu = runif(n,.25,.75) - 0.2*(a==astar)
   y = rbinom(n,1,mu)
   df = data.frame(y = y, a = as.factor(a), x)
   truth = .5 - .2*(a==astar)
   rm("a","x","y")
 
-  out = optSort(df, '~/temporaryoutputs/', optimizers = c("unconstrained", "constrained", "approximate"))
+  out = optSort(df, '~/temporaryoutputs/', optimizers = c("unconstrained", "constrained"))
+  #out = optSort(df, '~/temporaryoutputs/', optimizers = c("unconstrained", "constrained", "approximate"))
   expect_less_than(out$unconstrained$results$Estimate[2],.35)
   expect_less_than(out$constrained$results$Estimate[2],.4)
   expect_less_than(out$approximate$results$Estimate[2],.4)

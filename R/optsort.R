@@ -21,21 +21,21 @@
 
 optSort <- function(df, output_root = "~", fudge = .05, nsplits = 3,epsilon = 1e-3, sections = list(),nfolds=3,
                     optimizers = c("unconstrained", "constrained", "approximate"), script_name = "prison_assignment_sl_nm.m",
-                    sl.lib = c("SL.glmnet","SL.glm.interaction", "SL.mean","SL.ranger","SL.rpart","SL.earth","SL.xgboost","SL.glm"),
-                    sl.lib.pi = c("SL.glmnet","SL.glm.interaction", "SL.mean","SL.ranger","SL.rpart","SL.lda","SL.xgboost","SL.polymars")){
+                    sl.lib = c("SL.glmnet","SL.glm.interaction", "SL.mean","SL.ranger","SL.rpart","SL.lda","SL.earth","SL.xgboost","SL.polymars","SL.glm"),
+                    sl.lib.pi = c("SL.glmnet","SL.glm.interaction", "SL.mean","SL.ranger","SL.rpart","SL.lda","SL.earth","SL.xgboost","SL.polymars","SL.glm")){
   n = dim(df)[1]; p = length(unique(df$a))
   s = sample(rep(1:nsplits,ceiling(n/nsplits))[1:n])
+  avals = sort(unique(df$a))
 
   if(!("a"%in% names(df)) | !("y"%in% names(df)) ){stop("Treatment needs to be named 'a'; outcome needs to be named 'y'")}
   if(!(is.factor(df$a))){df$a = as.factor(df$a); warning("Converting a to factor")}
   if(fudge>.5){warning("Fudge factor over 0.5, likely too high")}
   if(nfolds<3){stop("must have at least 3 folds to train assignment vector")}
 
-  etas = nuisance_est(df, s, output_root, fudge, nsplits ,epsilon, sections, sl.lib, sl.lib.pi)
+  etas = nuisance_est(df, s, output_root, fudge, nsplits ,epsilon, sections, sl.lib, sl.lib.pi,nfolds,avals)
 
   muhat.mat = etas$muhat.mat
   pihat.mat = etas$pihat.mat
-  avals = unique(df$a)
 
   unconstrained.output <- constrained.output <- approx.output <- list()
   if("unconstrained" %in% tolower(optimizers)){ unconstrained.output = unconstrained_opt(df,avals,output_root) }

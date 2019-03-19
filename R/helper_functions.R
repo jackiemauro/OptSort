@@ -17,12 +17,12 @@ quiet <- function(x) {
 
 make_mu_matrix<-function(train_y, train_a, train_x, test_x, avals, sl.lib){
   requireNamespace("SuperLearner")
-  muhat = sapply(avals, function(k) predict_mu(train_y, train_a, k, train_x, sl.lib, test_x))
+  muhat = sapply(avals, function(k) predict_mu(train_y=train_y, train_a=train_a, a=k, train_x=train_x, sl.lib=sl.lib, test_x=test_x))
   return(muhat)
 }
 
 predict_mu <- function(train_y, train_a, a, train_x, sl.lib, test_x){
-  mu.model = quiet(SuperLearner(Y = train_y[train_a==a], X = train_x[train_a==a,], family = binomial(), SL.library = sl.lib, verbose = FALSE))
+  mu.model = quiet(SuperLearner(Y = train_y[train_a==a], X = train_x[train_a==a,], family = binomial(), SL.library = sl.lib))
   return(c(predict.SuperLearner(object = mu.model, newdata = test_x, onlySL = T)$pred))
 }
 
@@ -43,7 +43,7 @@ predict_pi <- function(a, train_a, train_x, test_x, sl.lib.pi){
   return(c(predict.SuperLearner(object = pi_model, newdata = test_x, onlySL = T)$pred))
 }
 
-nuisance_est <- function(df, s, output_root, fudge, nsplits, epsilon, sections, sl.lib, sl.lib.pi, nfolds){
+nuisance_est <- function(df, s, output_root, fudge, nsplits, epsilon, sections, sl.lib, sl.lib.pi, nfolds,avals){
 
   # splits into 3 samples (fixed):
   # sample 1: train mu and pi
@@ -62,7 +62,6 @@ nuisance_est <- function(df, s, output_root, fudge, nsplits, epsilon, sections, 
     if(length(sections)==0){
       train_y = df$y[train]; train_a = df$a[train];
       train_x = subset(df, select = -c(a, y))[train,]; test_x = subset(df, select = -c(a, y))[test,]
-      avals = sort(unique(train_a))
       muhat.mat[test,] = make_mu_matrix(train_y, train_a, train_x, test_x, avals, sl.lib)
       pihat.mat[test,] = make_pi_matrix(avals, train_a, train_x, test_x, epsilon, sl.lib.pi)
 
@@ -116,7 +115,7 @@ unconstrained_opt <- function(df,avals,output_root){
   pihatU = diag(pihat.mat %*% t(fU.mat))
   muhatU = diag(muhat.mat %*% t(fU.mat))
   pluginU = mean(muhatU)
-  ifU = (as.numeric(df$a == avals[fU])/pihatU)*(df$y - muhatU) + muhatU
+  ifU = (as.numeric(df$a == fU)/pihatU)*(df$y - muhatU) + muhatU
   psiU = mean(ifU)
   sdU = sd(ifU)/sqrt(length(muhatU))
   plugin.sdU = sd(muhatU)/sqrt(length(muhatU))
@@ -145,7 +144,7 @@ constrained_opt_split <- function(df, muhat.mat, pihat.mat, s, output_root, nspl
     pihatC = diag(pihat.mat[test,] %*% t(fC.mat))
     muhatC[test] = diag(muhat.mat[test,] %*% t(fC.mat))
   }
-  ifC = (as.numeric(df$a == avals[fC])/pihatC)*(df$y - muhatC) + muhatC
+  ifC = (as.numeric(df$a == fC)/pihatC)*(df$y - muhatC) + muhatC
   pluginC = mean(muhatC)
   plugin.sdC = sd(muhatC)/sqrt(length(muhatC))
   psiC = mean(ifC)
@@ -172,7 +171,7 @@ constrained_opt <- function(df, output_root, fudge, avals){
   pihatC = diag(pihat.mat %*% t(fC.mat))
   muhatC = diag(muhat.mat %*% t(fC.mat))
 
-  ifC = (as.numeric(df$a == avals[fC])/pihatC)*(df$y - muhatC) + muhatC
+  ifC = (as.numeric(df$a == fC)/pihatC)*(df$y - muhatC) + muhatC
   pluginC = mean(muhatC)
   plugin.sdC = sd(muhatC)/sqrt(length(muhatC))
   psiC = mean(ifC)
@@ -252,7 +251,7 @@ get_res <- function(df, fhat, pihat.mat, muhat.mat){
   muhat = diag(muhat.mat %*% t(fhat.mat))
   plugin = mean(muhat)
   plugin.sd = sd(muhat)/sqrt(length(muhat))
-  ifA = (as.numeric(df$a == avals[fhat])/pihat)*(df$y - muhat) + muhat
+  ifA = (as.numeric(df$a == fhat)/pihat)*(df$y - muhat) + muhat
   psi = mean(ifA)
   sd = sd(ifA)/sqrt(length(muhat))
 
