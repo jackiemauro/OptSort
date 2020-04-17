@@ -22,8 +22,9 @@ make_mu_matrix<-function(train_y, train_a, train_x, test_x, avals, sl.lib){
 }
 
 predict_mu <- function(train_y, train_a, a, train_x, sl.lib, test_x){
-  mu.model = quiet(SuperLearner(Y = train_y[train_a==a], X = train_x[train_a==a,], family = binomial(), SL.library = sl.lib))
-  return(c(predict.SuperLearner(object = mu.model, newdata = test_x, onlySL = T)$pred))
+  mu.model = quiet(SuperLearner(Y = train_y[train_a==a], X = train_x[train_a==a,], newX = test_x,
+                                family = binomial(), SL.library = sl.lib))
+  return(c(mu.model$SL.predict))
 }
 
 make_pi_matrix <- function(avals, train_a, train_x, test_x, epsilon = 1e-3, sl.lib.pi){
@@ -39,11 +40,11 @@ make_pi_matrix <- function(avals, train_a, train_x, test_x, epsilon = 1e-3, sl.l
 predict_pi <- function(a, train_a, train_x, test_x, sl.lib.pi){
   #for a single a value, create a model of prob(A = a) and predict on new data#
   requireNamespace("SuperLearner")
-  pi_model = quiet(SuperLearner(Y = as.numeric(train_a == a), X = train_x, family = binomial(), SL.library = sl.lib.pi))
-  return(c(predict.SuperLearner(object = pi_model, newdata = test_x, onlySL = T)$pred))
+  pi_model = quiet(SuperLearner(Y = as.numeric(train_a == a), X = train_x, newX = test_x, family = binomial(), SL.library = sl.lib.pi))
+  return(c(pi_model$SL.predict))
 }
 
-nuisance_est <- function(df, s, output_root, fudge, nsplits, epsilon, sections, sl.lib, sl.lib.pi, nfolds,avals){
+nuisance_est <- function(df, s, output_root, fudge, nsplits, epsilon, sections, sl.lib, sl.lib.pi, avals){
 
   # splits into 3 samples (fixed):
   # sample 1: train mu and pi
@@ -52,12 +53,12 @@ nuisance_est <- function(df, s, output_root, fudge, nsplits, epsilon, sections, 
 
   n = dim(df)[1]; p = length(unique(df$a))
   muhat.mat <- pihat.mat <- muhat2.mat <- matrix(rep(NA, n*p), ncol = p); assig.vec <- rep(NA,n)
+  for(vfold in 1:nsplits){
 
-  for(vfold in 1:nfolds){
-
-    train = (s==vfold)
-    train2 = sapply(s, function(k) ifelse(vfold<nsplits, k==vfold+1, k==1) )
-    test = !(train | train2)
+    test = (s==vfold)
+    train.folds = (1:nsplits)[-vfold]
+    train = (s %in% train.folds[1:ceiling(length(train.folds)/2)])
+    train2 = (s %in% train.folds[1+ceiling(length(train.folds)/2):length(train.folds)])
 
     if(length(sections)==0){
       train_y = df$y[train]; train_a = df$a[train];
@@ -94,7 +95,7 @@ nuisance_est <- function(df, s, output_root, fudge, nsplits, epsilon, sections, 
       }
     }
   }
-  write.csv(muhat.mat, paste(output_root,"muhat_mat.csv", sep = ""))
+  write.csv(muhat.mat, paste(output_root,"muhat_mat.csv", sep = "")) # this is
   write.csv(muhat2.mat, paste(output_root,"muhat2_mat.csv", sep = ""))
   write.csv(pihat.mat, paste(output_root,"pihat_mat.csv", sep = ""))
   write.csv(assig.vec, paste(output_root,"assig_vec.csv", sep = ""))
@@ -111,11 +112,11 @@ unconstrained_opt <- function(df,avals,output_root){
   pihat.mat = as.matrix(read.csv(paste(output_root,"pihat_mat.csv", sep = "")))[,-1]
   fU = read.csv(paste(output_root,"assig_vec.csv", sep = ""))[,-1]
 
-  fU.mat = sapply(c(1:length(avals)), function(a) as.numeric(fU == a))
+  fU.mat = sapply(as.character(avals), function(a) as.numeric(as.character(fU) == a))
   pihatU = diag(pihat.mat %*% t(fU.mat))
   muhatU = diag(muhat.mat %*% t(fU.mat))
   pluginU = mean(muhatU)
-  ifU = (as.numeric(df$a == fU)/pihatU)*(df$y - muhatU) + muhatU
+  ifU = (as.numeric(as.character(df$a) == as.character(fU))/pihatU)*(df$y - muhatU) + muhatU
   psiU = mean(ifU)
   sdU = sd(ifU)/sqrt(length(muhatU))
   plugin.sdU = sd(muhatU)/sqrt(length(muhatU))
@@ -167,7 +168,7 @@ constrained_opt <- function(df, output_root, fudge, avals){
 
   fC.mat = read.csv(paste(output_root,"constrained_optimized_assignment.csv", sep = ""), header = F)
 
-  fC = apply(fC.mat,1,which.max)
+  fC = avals[apply(fC.mat,1,which.max)]
   pihatC = diag(pihat.mat %*% t(fC.mat))
   muhatC = diag(muhat.mat %*% t(fC.mat))
 
@@ -186,59 +187,88 @@ constrained_opt <- function(df, output_root, fudge, avals){
   return(list(results = res, assig.vec = fC, infl.func = ifC))
 }
 
-approximate_opt <- function(df, output_root, fudge, sections,sl.lib = sl.lib, sl.lib.pi = sl.lib.pi){
+approximate_opt <- function(df, output_root, fudge, sections,sl.lib,sl.lib.pi,s,nsplits){
   print("Estimating Approximate Constrained Optimal")
+  muhat.mat = as.matrix(read.csv(paste(output_root,"muhat_mat.csv", sep = "")))[,-1]
+  pihat.mat = as.matrix(read.csv(paste(output_root,"pihat_mat.csv", sep = "")))[,-1]
+
   # get appromximate constrained regression-based estimates
   n = dim(df)[1]; p = length(unique(df$a))
+  #s = sample(rep(1:2,ceiling(n/2))[1:n]) #take a new s so you don't have 3 splits
   fhat <- rep(NA,n)
-  s = sample(rep(1:2,ceiling(n/2))[1:n])
+  avals = sort(unique(df$a))
 
-  muhat.mat <- pihat.mat <- matrix(rep(NA, n*p), ncol = p)
-  for(vfold in 1:2){
+  for(vfold in 1:nsplits){
     # step 1: train and predict mu model on training data for each a
-    train = (s==vfold); test = (s!=vfold)
+    train = (s!=vfold); test = (s==vfold)
 
     if(length(sections)==0){
       avals = sort(unique(df$a))
       train_y = df$y[train]; train_a = df$a[train]; avals = sort(unique(train_a))
       train_x = subset(df, select = -c(a, y))[train,]; test_x = subset(df, select = -c(a, y))[test,]
       muhat.mat.train = make_mu_matrix(train_y,train_a,train_x,train_x,avals,sl.lib)
-      muhat.mat[test,] = make_mu_matrix(train_y,train_a,train_x,test_x,avals,sl.lib)
-      pihat.mat[test,] = make_pi_matrix(avals, train_a, train_x, test_x, epsilon=1e-3, sl.lib.pi)
+      #muhat.mat[test,] = make_mu_matrix(train_y,train_a,train_x,test_x,avals,sl.lib)
+      #pihat.mat[test,] = make_pi_matrix(avals, train_a, train_x, test_x, epsilon=1e-3, sl.lib.pi)
     }
     else{
       muhat.mat.train <- matrix(rep(NA,sum(train)*p), ncol = p)
       for(sec in sections){
-        avals = sort(sec); train_cond = (train & (df$a %in% sec));  test_cond = (test & (df$a %in% sec))
+        as = sort(sec); train_cond = (train & (df$a %in% sec));  test_cond = (test & (df$a %in% sec))
 
         # estimate nuisance parameters within sections
         train_y = df$y[train_cond]; train_a = df$a[train_cond]
         train_x = subset(df, select = -c(a, y))[train_cond,]
         test_x = subset(df, select = -c(a, y))[test_cond,]
         train_df = data.frame(a = as.numeric(train_a), train_x)
-        muhat.mat.train[df[train,]$a %in% sec,levels(df$a) %in% sec] = make_mu_matrix(train_y,train_a,train_x,train_x,avals,sl.lib)
-        muhat.mat[test_cond,levels(df$a) %in% sec] = make_mu_matrix(train_y,train_a,train_x,test_x,avals,sl.lib)
-        pihat.mat[test_cond,] = make_pi_matrix(avals, train_a, train_x, test_x, epsilon=1e-3, sl.lib.pi)
+        muhat.mat.train[df[train,]$a %in% sec,levels(df$a) %in% sec] = make_mu_matrix(train_y,train_a,train_x,train_x,as,sl.lib)
+        #muhat.mat[test_cond,levels(df$a) %in% sec] = make_mu_matrix(train_y,train_a,train_x,test_x,as,sl.lib)
+        #pihat.mat[test_cond,levels(df$a) %in% sec] = make_pi_matrix(as, train_a, train_x, test_x, epsilon=1e-3, sl.lib.pi)
 
         # replace NA's (wrong section) with large values so optimization doesn't assign them
         muhat.mat.train[df[train,]$a %in% sec, !(levels(df$a) %in% sec)] = 1e10
-        muhat.mat[test_cond, !(levels(df$a) %in% sec)] = 1e10
+        #muhat.mat[test_cond, !(levels(df$a) %in% sec)] = 1e10
+        #pihat.mat[test_cond, !(levels(df$a) %in% sec)] = 1e-3
       }
     }
-    # step 2: get constrained assignment based on step muhats
-    write.csv(round(c(table(df[train,]$a) * (1+fudge))), paste(output_root, 'constraint.csv', sep = ""))
-    write.csv(muhat.mat.train, paste(output_root,"muhat_mat.csv", sep = ""))
-    run_matlab_script(paste(output_root,'constrained_optimizer_code.m',sep= ""))
-    fC.mat = read.csv(paste(output_root,"constrained_optimized_assignment.csv", sep = ""), header = F)
-    fC = apply(fC.mat,1,which.max)
 
-    # step 3: train the model E(f|muhat) on the training data
-    class.df = data.frame(a = as.factor(fC), muhat.mat.train)
-    f.model = ranger::ranger(a~., data = class.df, write.forest = TRUE)
+    if(length(sections)==0){
+      # step 2: get constrained assignment based on step muhats
+      write.csv(round(c(table(df[train,]$a))), paste(output_root, 'constraint.csv', sep = ""))
+      write.csv(muhat.mat.train, paste(output_root,"muhat_mat.csv", sep = ""))
+      run_matlab_script(paste(output_root,'constrained_optimizer_code.m',sep= ""))
+      fC.mat = read.csv(paste(output_root,"constrained_optimized_assignment.csv", sep = ""), header = F)
+      fC = avals[apply(fC.mat,1,which.max)]
 
-    # step 4: fhat on testing data
-    fhat[test] = predict(f.model, data.frame(muhat.mat[test,]), type='response')$pre
+      # step 3: train the model E(f|muhat) on the training data
+      class.df = data.frame(a = as.factor(fC), muhat.mat.train)
+      f.model = ranger::ranger(a~., data = class.df, write.forest = TRUE)
+
+      # step 4: fhat on testing data
+      fhat[test] = predict(f.model, data.frame(muhat.mat[test,]), type='response')$pre
+    }
+
+    else{
+      for(sec in sections){
+        # step 2: get constrained assignment based on step muhats
+        write.csv(round(c(table(df[train & (df$a %in% sec),]$a))), paste(output_root, 'constraint.csv', sep = ""))
+        write.csv(muhat.mat.train[df[train,]$a %in% sec,], paste(output_root,"muhat_mat.csv", sep = ""))
+        run_matlab_script(paste(output_root,'constrained_optimizer_code.m',sep= ""))
+        fC.mat = read.csv(paste(output_root,"constrained_optimized_assignment.csv", sep = ""), header = F)
+        fC = apply(fC.mat,1,which.max)
+
+        # step 3: train the model E(f|muhat) on the training data
+        class.df = data.frame(a = as.factor(fC), muhat.mat.train[df[train,]$a %in% sec, (levels(df$a) %in% sec) ])
+        f.model = ranger::ranger(a~., data = class.df, write.forest = TRUE)
+
+        # step 4: fhat on testing data
+        pred.df = data.frame(muhat.mat[test & (df$a %in% sec), (levels(df$a) %in% sec)])
+        names(pred.df) <- names(class.df)[-1]
+        preds = predict(f.model, pred.df, type='response')$pre
+        fhat[test & (df$a %in% sec)] = as.character(preds)
+      }
+    }
   }
+  fhat = avals[as.numeric(fhat)]
   res = get_res(df, fhat, pihat.mat, muhat.mat)
 
   return(list(results = res$res, assig.vec = fhat, infl.func = res$infl.func))
